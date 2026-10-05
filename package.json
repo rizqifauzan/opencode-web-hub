@@ -1,0 +1,16 @@
+{
+  "name": "opencode-web-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Workspace hub + auth gateway in front of `opencode web` (clone from GitHub / new folder)",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "http-proxy": "^1.18.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

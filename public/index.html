@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>opencode hub</title>
+<style>
+  :root { --bg:#fafafa; --card:#fff; --fg:#161616; --muted:#6b6b6b; --line:#e4e4e4; --accent:#2563eb; --danger:#dc2626; --ok:#16a34a; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0e0e10; --card:#17171a; --fg:#ececec; --muted:#9a9a9f; --line:#2a2a2f; --accent:#60a5fa; --danger:#f87171; --ok:#4ade80; } }
+  * { box-sizing: border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 64px; display:grid; gap:16px }
+  header { display:flex; justify-content:space-between; align-items:center }
+  h1 { margin:0; font-size:20px } h2 { margin:0 0 10px; font-size:15px }
+  a { color:var(--accent) }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px }
+  input, select, button { font:inherit; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--fg) }
+  button { cursor:pointer } button.primary { background:var(--accent); color:#fff; border-color:transparent; font-weight:600 }
+  button.danger { color:var(--danger) } button:disabled { opacity:.5; cursor:wait }
+  .row { display:flex; gap:8px; flex-wrap:wrap } .row > input, .row > select { flex:1; min-width:140px }
+  .muted { color:var(--muted); font-size:13px }
+  .item { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--line) }
+  .item:first-of-type { border-top:0 }
+  .item .meta { min-width:0 } .item .meta div { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .code { font:600 24px/1.2 ui-monospace, monospace; letter-spacing:2px; margin:8px 0 }
+  #msg { min-height:1.4em; margin:0; font-size:13px } .bad { color:var(--danger) } .good { color:var(--ok) }
+  .hidden { display:none }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>opencode hub</h1><a href="/hub/logout">Keluar</a></header>
+  <p id="msg"></p>
+
+  <section id="gh">
+    <h2>GitHub</h2>
+    <div id="gh-body" class="muted">Memuat…</div>
+  </section>
+
+  <section id="new">
+    <h2>Workspace baru</h2>
+    <div class="row hidden" id="clone-row" style="margin-bottom:8px">
+      <input id="repo" list="repos" placeholder="owner/repo atau URL GitHub">
+      <datalist id="repos"></datalist>
+      <input id="branch" placeholder="branch (opsional)" style="max-width:180px">
+      <button class="primary" id="btn-clone">Clone</button>
+    </div>
+    <div class="row">
+      <input id="empty-name" placeholder="nama folder baru">
+      <button id="btn-empty">Folder kosong</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Workspace</h2>
+    <div id="list" class="muted">Memuat…</div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id)
+const msg = (t, cls = "") => { $("msg").textContent = t; $("msg").className = cls }
+async function call(path, body) {
+  const res = await fetch("/hub/api/" + path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+  if (res.status === 401) return (location.href = "/hub/login")
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || "Gagal")
+  return data
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
+
+async function renderGithub() {
+  const s = await call("github")
+  $("clone-row").classList.toggle("hidden", !s.connected)
+  if (s.connected) {
+    $("gh-body").innerHTML = `Terhubung sebagai <b>${esc(s.user.login)}</b> · <a href="#" id="gh-off">putuskan</a>`
+    $("gh-off").onclick = async (e) => { e.preventDefault(); await call("github/disconnect", {}); renderGithub() }
+    call("github/repos").then((rs) => { $("repos").innerHTML = rs.map((r) => `<option value="${esc(r.fullName)}">${r.private ? "🔒 " : ""}${esc(r.description || "")}</option>`).join("") }).catch(() => {})
+    return
+  }
+  $("gh-body").innerHTML = `
+    ${s.deviceFlow ? `<button class="primary" id="gh-dev">Hubungkan dengan GitHub</button>` : `<span class="muted">GITHUB_CLIENT_ID belum diset — pakai token.</span>`}
+    <div class="row" style="margin-top:10px"><input id="pat" type="password" placeholder="atau tempel Personal Access Token"><button id="gh-pat">Simpan</button></div>
+    <div id="gh-dev-out"></div>`
+  if (s.deviceFlow) $("gh-dev").onclick = startDevice
+  $("gh-pat").onclick = async () => { try { await call("github/token", { token: $("pat").value }); renderGithub() } catch (e) { msg(e.message, "bad") } }
+}
+
+async function startDevice() {
+  try {
+    const d = await call("github/device", {})
+    $("gh-dev-out").innerHTML = `<div class="code">${esc(d.userCode)}</div><div class="muted">Buka <a href="${esc(d.verificationUri)}" target="_blank" rel="noopener">${esc(d.verificationUri)}</a> dan masukkan kode di atas.</div>`
+    let wait = d.interval
+    const tick = async () => {
+      const r = await call("github/poll", {})
+      if (r.status === "ok") return renderGithub()
+      if (r.status === "pending" || r.status === "slow_down") { if (r.status === "slow_down") wait += 5; return setTimeout(tick, wait * 1000) }
+      msg(r.error || "Kode kedaluwarsa, ulangi.", "bad")
+    }
+    setTimeout(tick, wait * 1000)
+  } catch (e) { msg(e.message, "bad") }
+}
+
+async function renderList() {
+  const items = await call("workspaces")
+  if (!items.length) { $("list").textContent = "Belum ada workspace."; return }
+  $("list").innerHTML = items.map((w) => `
+    <div class="item">
+      <div class="meta"><div><b>${esc(w.name)}</b> ${w.branch ? `<span class="muted">· ${esc(w.branch)}</span>` : ""}</div><div class="muted">${esc(w.remote || "lokal")}</div></div>
+      <div class="row"><a href="${esc(w.openPath)}"><button class="primary">Buka</button></a><button class="danger" data-del="${esc(w.name)}">Hapus</button></div>
+    </div>`).join("")
+  document.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
+    if (!confirm(`Hapus workspace "${b.dataset.del}" beserta isinya?`)) return
+    await call("workspaces/delete", { name: b.dataset.del }); renderList()
+  })
+}
+
+async function create(btn, path, body) {
+  btn.disabled = true; msg(path.endsWith("clone") ? "Cloning… (repo besar bisa lama)" : "Membuat…")
+  try { const r = await call(path, body); location.href = r.openPath }
+  catch (e) { msg(e.message, "bad"); btn.disabled = false }
+}
+$("btn-clone").onclick = (e) => create(e.target, "workspaces/clone", { repo: $("repo").value, branch: $("branch").value || undefined })
+$("btn-empty").onclick = (e) => create(e.target, "workspaces/empty", { name: $("empty-name").value })
+
+renderGithub().catch((e) => msg(e.message, "bad"))
+renderList().catch((e) => msg(e.message, "bad"))
+</script>
+</body>
+</html>

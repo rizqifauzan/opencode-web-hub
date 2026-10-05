@@ -1,0 +1,10 @@
+services:
+  hub:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # bound to localhost: expose through Tailscale / Cloudflare Tunnel, not directly
+      - "127.0.0.1:${HUB_PORT:-8080}:8080"
+    # no volumes on purpose: workspaces and sessions are wiped on redeploy
+    # add `- hub-data:/workspaces` (and /home/app/.local/share/opencode) to keep them
